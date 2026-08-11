@@ -381,6 +381,107 @@ class TestPDD(unittest.TestCase):
             self.assertAlmostEqual(der1, der2, 7)
             self.assertAlmostEqual(der1, der3, 6)
 
+    def test_pdd_non_default_pressure_exponent(self):
+        """
+        pdd_poly_coeffs_param must build its smoothing-spline coefficients
+        using the same pressure_exponent that pdd_constraint uses for the
+        power-law segment. With a non-default exponent, the two code paths
+        should still meet with matching value and slope at the breakpoints
+        (pmin+delta and pnom-delta), just like the default-exponent case
+        tested above in test_pdd.
+        """
+        wn = self.wn
+        node = wn.get_node("j1")
+        node.required_pressure = 20.0
+        node.minimum_pressure = 0.0
+        node.pressure_exponent = 0.35  # non-default; default is 0.5
+
+        try:
+            m = wntr.sim.aml.Model()
+            updater = ModelUpdater()
+            wntr.sim.models.constants.pdd_constants(m)
+            wntr.sim.models.param.expected_demand_param(m, wn)
+            wntr.sim.models.param.elevation_param.build(m, wn, updater)
+            wntr.sim.models.param.pdd_poly_coeffs_param.build(m, wn, updater)
+            wntr.sim.models.param.pmin_param.build(m, wn, updater)
+            wntr.sim.models.param.pnom_param.build(m, wn, updater)
+            wntr.sim.models.var.head_var(m, wn)
+            wntr.sim.models.var.demand_var(m, wn)
+            wntr.sim.models.constraint.pdd_constraint.build(m, wn, updater)
+
+            pmin = node.minimum_pressure
+            pnom = node.required_pressure
+            exponent = node.pressure_exponent
+            h0 = node.elevation + pmin
+            h1 = node.elevation + pnom
+            delta = m.pdd_smoothing_delta
+            heads_to_test = [
+                h0 - 1,
+                h0,
+                h0 + delta / 2,
+                h0 + delta,
+                h0 + (pmin + pnom) / 2,
+                h1 - delta,
+                h1 - delta / 2,
+                h1,
+                h1 + 1,
+            ]
+            d_expected = node.demand_timeseries_list.at(
+                wn.sim_time, multiplier=wn.options.hydraulic.demand_multiplier
+            )
+
+            d = 0.01
+
+            m.demand["j1"].value = d
+            a1 = m.pdd_poly1_coeffs_a["j1"].value
+            b1 = m.pdd_poly1_coeffs_b["j1"].value
+            c1 = m.pdd_poly1_coeffs_c["j1"].value
+            d1 = m.pdd_poly1_coeffs_d["j1"].value
+            a2 = m.pdd_poly2_coeffs_a["j1"].value
+            b2 = m.pdd_poly2_coeffs_b["j1"].value
+            c2 = m.pdd_poly2_coeffs_c["j1"].value
+            d2 = m.pdd_poly2_coeffs_d["j1"].value
+            delta = m.pdd_smoothing_delta
+            slope = m.pdd_slope
+
+            for h in heads_to_test:
+                m.head["j1"].value = h
+                r1 = m.pdd["j1"].evaluate()
+                p = h - node.elevation
+                if p <= pmin:
+                    r2 = d - d_expected * slope * (p - pmin)
+                elif p <= pmin + delta:
+                    r2 = d - d_expected * (a1 * p ** 3 + b1 * p ** 2 + c1 * p + d1)
+                elif p <= pnom - delta:
+                    r2 = d - d_expected * ((p - pmin) / (pnom - pmin)) ** exponent
+                elif p <= pnom:
+                    r2 = d - d_expected * (a2 * p ** 3 + b2 * p ** 2 + c2 * p + d2)
+                else:
+                    r2 = d - d_expected * (slope * (p - pnom) + 1.0)
+                self.assertAlmostEqual(r1, r2, 12)
+                der1 = m.pdd["j1"].reverse_ad()[m.head["j1"]]
+                der2 = m.pdd["j1"].reverse_ad()[m.head["j1"]]
+                der3 = approximate_derivative(m.pdd["j1"], m.head["j1"], 1e-6)
+                self.assertAlmostEqual(der1, der2, 7)
+                self.assertAlmostEqual(der1, der3, 6)
+
+            # Explicitly confirm value/slope continuity at the two
+            # breakpoints where the cubic spline segments meet the
+            # power-law segment (this is exactly where the bug caused a
+            # mismatch when pressure_exponent != 0.5).
+            for h_bp in (h0 + delta, h1 - delta):
+                m.head["j1"].value = h_bp
+                p = h_bp - node.elevation
+                power_law_val = d - d_expected * ((p - pmin) / (pnom - pmin)) ** exponent
+                spline_val = m.pdd["j1"].evaluate()
+                self.assertAlmostEqual(power_law_val, spline_val, 10)
+        finally:
+            # Restore class-level fixture state so other tests in this
+            # class aren't affected by this test's non-default exponent.
+            node.pressure_exponent = None
+            node.required_pressure = None
+            node.minimum_pressure = None
+
 
 if __name__ == "__main__":
     unittest.main()

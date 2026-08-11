@@ -225,18 +225,22 @@ class pdd_poly_coeffs_param(Definition):
                 pnom = wn.options.hydraulic.required_pressure
             else:
                 pnom = node.required_pressure
+            if node.pressure_exponent is None:
+                pressure_exponent = wn.options.hydraulic.pressure_exponent
+            else:
+                pressure_exponent = node.pressure_exponent
             x1 = pmin
             f1 = 0.0
             x2 = pmin + m.pdd_smoothing_delta
-            f2 = ((x2 - pmin)/(pnom-pmin))**0.5
+            f2 = ((x2 - pmin)/(pnom-pmin))**pressure_exponent
             df1 = m.pdd_slope
-            df2 = 0.5*((x2-pmin)/(pnom-pmin))**(-0.5)*1.0/(pnom-pmin)
+            df2 = pressure_exponent*((x2-pmin)/(pnom-pmin))**(pressure_exponent-1.0)*1.0/(pnom-pmin)
             a1, b1, c1, d1 = cubic_spline(x1, x2, f1, f2, df1, df2)
             x1 = pnom-m.pdd_smoothing_delta
-            f1 = ((x1-pmin)/(pnom-pmin))**0.5
+            f1 = ((x1-pmin)/(pnom-pmin))**pressure_exponent
             x2 = pnom
             f2 = 1.0
-            df1 = 0.5*((x1-pmin)/(pnom-pmin))**(-0.5)*1.0/(pnom-pmin)
+            df1 = pressure_exponent*((x1-pmin)/(pnom-pmin))**(pressure_exponent-1.0)*1.0/(pnom-pmin)
             df2 = m.pdd_slope
             a2, b2, c2, d2 = cubic_spline(x1, x2, f1, f2, df1, df2)
             if node_name in m.pdd_poly1_coeffs_a:
@@ -260,6 +264,7 @@ class pdd_poly_coeffs_param(Definition):
 
             updater.add(node, 'minimum_pressure', pdd_poly_coeffs_param.update)
             updater.add(node, 'required_pressure', pdd_poly_coeffs_param.update)
+            updater.add(node, 'pressure_exponent', pdd_poly_coeffs_param.update)
 
 
 class leak_poly_coeffs_param(Definition):
